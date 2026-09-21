@@ -1,0 +1,93 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+// Safely load local firebase config if present without breaking Vite build when absent
+const localConfigModules = import.meta.glob<{ default?: Record<string, any> } | Record<string, any>>(
+  '../../firebase-applet-config.json',
+  { eager: true }
+);
+const localConfigRaw = Object.values(localConfigModules)[0] as Record<string, any> | undefined;
+const localFirebaseConfig = (localConfigRaw?.default || localConfigRaw) || null;
+
+// Support using public environment variables to keep secrets out of the codebase
+const envFirebaseConfig = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+};
+
+const hasEnvConfig = !!(envFirebaseConfig.projectId && envFirebaseConfig.apiKey);
+const hasLocalConfig = !!(localFirebaseConfig && (localFirebaseConfig as any).projectId && (localFirebaseConfig as any).apiKey);
+
+export const isFirebaseConfigured = hasEnvConfig || hasLocalConfig;
+
+const placeholderConfig = {
+  apiKey: "AIzaSyDummyKeyForLocalMockingAndNoCrash123",
+  authDomain: "placeholder-project.firebaseapp.com",
+  projectId: "placeholder-project-id",
+  storageBucket: "placeholder-project.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "1:000000000000:web:000000000000"
+};
+
+const firebaseConfig = isFirebaseConfigured 
+  ? (hasEnvConfig ? envFirebaseConfig : (localFirebaseConfig as any)) 
+  : placeholderConfig;
+
+const app = initializeApp(firebaseConfig);
+// Fallback path in case firestoreDatabaseId isn't explicitly configured or loaded
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
+export const auth = getAuth();
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never | void {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+              })) || []
+    },
+    operationType,
+    path
+  };
+  console.warn('Firestore Warning/Error (Fallback Active if unconfigured): ', JSON.stringify(errInfo));
+  if (isFirebaseConfigured) {
+    throw new Error(JSON.stringify(errInfo));
+  }
+}
