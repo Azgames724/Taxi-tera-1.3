@@ -1,10 +1,36 @@
+# Dependencies
 node_modules/
+
+# Production builds
 build/
 dist/
 coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
-firebase-applet-config.json
 
+# Operating System files
+.DS_Store
+Thumbs.db
+*.log
+
+# Environment variables & secrets (CRITICAL for public repositories)
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# Firebase & Cloud Credentials
+firebase-applet-config.json
+serviceAccountKey.json
+google-services.json
+GoogleService-Info.plist
+*.pem
+*.key
+*.cert
+*.p12
+
+# Editor settings
+.vscode/*
+!.vscode/extensions.json
+.idea/

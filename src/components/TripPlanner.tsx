@@ -49,6 +49,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { COORDS, TRANSLATIONS, Station, STATIONS } from '../data/transitData';
 import { findTripPaths, TripPath, enhancePathWithGeometry } from '../lib/routing';
+import { isValidLatLng } from '../utils/geoUtils';
 import { db, handleFirestoreError, OperationType, isFirebaseConfigured } from '../lib/firebase';
 import { collection, onSnapshot, setDoc, doc } from 'firebase/firestore';
 import { clsx, type ClassValue } from 'clsx';
@@ -298,22 +299,25 @@ export default function TripPlanner({
 
   // Subscribes to route verification upvotes in real-time or localStorage fallback
   useEffect(() => {
+    const loadLocalUpvotes = () => {
+      try {
+        const stored = localStorage.getItem('tt_local_route_upvotes');
+        const votes: Record<string, number> = stored ? JSON.parse(stored) : {};
+        setUpvotes(votes);
+      } catch (e) {
+        console.error("Failed to load local upvotes", e);
+      }
+    };
+
+    // Load initial cached upvotes immediately
+    loadLocalUpvotes();
+
     if (!isFirebaseConfigured) {
-      const loadLocalUpvotes = () => {
-        try {
-          const stored = localStorage.getItem('tt_local_route_upvotes');
-          const votes: Record<string, number> = stored ? JSON.parse(stored) : {};
-          setUpvotes(votes);
-        } catch (e) {
-          console.error("Failed to load local upvotes", e);
-        }
-      };
-      loadLocalUpvotes();
-      // Poll storage fallback so that other tabs/actions mirror instantly
       const interval = setInterval(loadLocalUpvotes, 4000);
       return () => clearInterval(interval);
     }
 
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
     const unsubscribe = onSnapshot(collection(db, 'route_upvotes'), (snapshot) => {
       const votes: Record<string, number> = {};
       snapshot.forEach((doc) => {
@@ -323,11 +327,23 @@ export default function TripPlanner({
         }
       });
       setUpvotes(votes);
+      try {
+        localStorage.setItem('tt_local_route_upvotes', JSON.stringify(votes));
+      } catch {
+        // ignore
+      }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'route_upvotes');
+      loadLocalUpvotes();
+      if (!pollInterval) {
+        pollInterval = setInterval(loadLocalUpvotes, 4000);
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, []);
   const [userVoted, setUserVoted] = useState<string[]>(() => {
     try {
@@ -369,56 +385,48 @@ export default function TripPlanner({
       let startPoint = origin.trim();
       const endPoint = destination.trim();
       
-      if (startPoint === 'Current Location' && userLocation) {
-        let nearest = '';
-        let minDest = Infinity;
-        
-        Object.entries(COORDS).forEach(([name, pos]) => {
-          const dist = Math.sqrt(Math.pow(pos[0] - userLocation[0], 2) + Math.pow(pos[1] - userLocation[1], 2));
-          if (dist < minDest) {
-            minDest = dist;
-            nearest = name;
-          }
-        });
-        
-        if (nearest) startPoint = nearest;
-      }
+      const isCurrentLoc =
+        startPoint === 'Current Location' ||
+        startPoint === 'የአሁኑ አካባቢ' ||
+        startPoint === 'የአሁኑ ቦታ' ||
+        startPoint === 'አሁን ያሉበት ቦታ';
 
-      const basicPaths = findTripPaths(startPoint, endPoint);
-      
-      const seen = new Set<string>();
-      const uniqueBasicPaths = basicPaths.filter(path => {
-        const key = path.legs.map(l => `${l.from}-${l.to}`).join('|');
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      const startArg: string | [number, number] =
+        isCurrentLoc && isValidLatLng(userLocation)
+          ? userLocation
+          : startPoint;
+      const endArg: string | [number, number] = endPoint;
 
-      // Show basic results first
-      setResults(uniqueBasicPaths);
+      const computedPaths = findTripPaths(startArg, endArg);
+
+      // Display polished, deduplicated results immediately
+      setResults(computedPaths);
       setIsSearching(false);
 
+      if (computedPaths.length > 0) {
+        setSelectedIdx(0);
+        onPathSelect(computedPaths[0]);
+      }
+
       if (isOffline) {
-        // Skip background geometry calls instantly when offline to work 100% with no lag
         return;
       }
 
-      // Background enhance with geometry to "snap to roads" using local/server OSRM
-      for (let i = 0; i < uniqueBasicPaths.length; i++) {
+      // Enhance with road geometry via OSRM in background
+      for (let i = 0; i < computedPaths.length; i++) {
         try {
-          const enhanced = await enhancePathWithGeometry(uniqueBasicPaths[i], COORDS);
+          const enhanced = await enhancePathWithGeometry(computedPaths[i], COORDS);
           setResults(prev => {
-            const newResults = [...prev];
-            newResults[i] = {
-              ...enhanced,
-              // Add simulated base votes if there are no pre-existing upvotes
-              totalDistance: enhanced.totalDistance || 1000,
-              totalDuration: enhanced.totalDuration || 120,
-            };
-            return newResults;
+            const next = [...prev];
+            next[i] = enhanced;
+            return next;
           });
+          // Keep active path synced on map if currently selected
+          if (i === 0) {
+            onPathSelect(enhanced);
+          }
         } catch (e) {
-          console.error('Enhancement failed for path', i, e);
+          // Keep fallback geometry on network failure
         }
       }
     } catch (error) {
@@ -575,13 +583,7 @@ export default function TripPlanner({
     const newUpvotes = { ...upvotes, [routeKey]: newVotes };
     setUpvotes(newUpvotes);
 
-    if (!isFirebaseConfigured) {
-      try {
-        localStorage.setItem('tt_local_route_upvotes', JSON.stringify(newUpvotes));
-      } catch (e) {
-        console.error("Failed to write local upvote", e);
-      }
-    } else {
+    if (isFirebaseConfigured) {
       try {
         await setDoc(doc(db, 'route_upvotes', routeKey), {
           routeKey,
@@ -590,6 +592,12 @@ export default function TripPlanner({
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `route_upvotes/${routeKey}`);
       }
+    }
+
+    try {
+      localStorage.setItem('tt_local_route_upvotes', JSON.stringify(newUpvotes));
+    } catch (e) {
+      console.error("Failed to write local upvote", e);
     }
 
     const updatedVotedList = [...userVoted, routeKey];
@@ -748,6 +756,9 @@ export default function TripPlanner({
                     setShowDestAuto(false);
                   }}
                   onBlur={() => setTimeout(() => setShowOriginAuto(false), 240)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSearch();
+                  }}
                   placeholder={lang === 'am' ? 'የት መነሳት ይፈልጋሉ?' : 'Where are you starting from?'}
                   className="bg-transparent border-none outline-none w-full text-xs font-black text-slate-800 placeholder-slate-400 leading-none py-0.5"
                 />
@@ -826,6 +837,9 @@ export default function TripPlanner({
                     setShowOriginAuto(false);
                   }}
                   onBlur={() => setTimeout(() => setShowDestAuto(false), 240)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSearch();
+                  }}
                   placeholder={lang === 'am' ? 'የት መድረስ ይፈልጋሉ?' : 'Where do you want to go?'}
                   className="bg-transparent border-none outline-none w-full text-xs font-black text-slate-800 placeholder-slate-400 leading-none py-0.5"
                 />
@@ -937,6 +951,7 @@ export default function TripPlanner({
                       setOrigin(mark.name);
                     } else {
                       setDestination(mark.name);
+                      setResults([]);
                     }
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-100 rounded-full text-[10px] font-black text-slate-700 hover:text-slate-900 active:scale-95 transition-all shadow-[0_1px_3px_rgba(15,23,42,0.01)] hover:shadow-sm hover:border-slate-300 shrink-0 snap-start"
@@ -1476,23 +1491,7 @@ export default function TripPlanner({
           results.map((path, idx) => {
             const totalDistKm = path.totalDistance ? (path.totalDistance / 1000).toFixed(1) : null;
             const totalDurationMins = path.totalDuration ? Math.round(path.totalDuration / 60) : null;
-            
-            const estimateFare = (distMeters: number) => {
-              if (distMeters <= 2500) return 10;
-              if (distMeters <= 5000) return 15;
-              if (distMeters <= 7500) return 20;
-              if (distMeters <= 10000) return 25;
-              if (distMeters <= 12500) return 30;
-              if (distMeters <= 15000) return 35;
-              if (distMeters <= 17500) return 40;
-              if (distMeters <= 20000) return 45;
-              if (distMeters <= 22500) return 50;
-              if (distMeters <= 25000) return 55;
-              if (distMeters <= 27500) return 60;
-              if (distMeters <= 30000) return 65;
-              return 70;
-            };
-            const totalFare = path.totalDistance ? estimateFare(path.totalDistance) : null;
+            const totalFare = path.totalFare;
 
             // Compute unique deterministic routing ID key
             const routeKey = path.legs.map(l => `${l.from}-${l.to}`).join('|');
@@ -1509,96 +1508,173 @@ export default function TripPlanner({
                   onPathSelect(path);
                 }}
                 className={cn(
-                  "bg-white rounded-2xl p-3.5 shadow-sm border transition-all duration-300 group cursor-pointer text-left flex flex-col gap-3",
-                  selectedIdx === idx ? "border-primary ring-2 ring-primary/15 shadow-md scale-[1.01]" : "border-slate-100 hover:border-slate-300/80 hover:bg-slate-50/30"
+                  "bg-white rounded-2xl p-4 shadow-sm border transition-all duration-300 group cursor-pointer text-left flex flex-col gap-3.5",
+                  selectedIdx === idx 
+                    ? "border-primary ring-2 ring-primary/20 shadow-md scale-[1.01]" 
+                    : "border-slate-100 hover:border-slate-300 hover:bg-slate-50/40"
                 )}
               >
                 {/* Meta Header */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between border-b border-slate-100/80 pb-2.5">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="p-1 px-1.5 bg-primary/5 text-primary text-[8px] font-black rounded uppercase tracking-wider border border-primary/10">
-                      {path.transfers === 0 ? (lang === 'am' ? 'ቀጥታ መስመር' : 'Direct') : `${path.transfers} ${lang === 'am' ? 'ግንኙነት' : (path.transfers === 1 ? 'Transfer' : 'Transfers')}`}
+                    {/* Intelligent Route Badge */}
+                    {path.badgeLabel ? (
+                      <span className={cn(
+                        "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md flex items-center gap-1 border",
+                        path.badge === 'recommended' && "bg-cyan-50 text-cyan-800 border-cyan-200/80",
+                        path.badge === 'direct' && "bg-emerald-50 text-emerald-800 border-emerald-200/80",
+                        path.badge === 'fastest' && "bg-amber-50 text-amber-800 border-amber-200/80",
+                        path.badge === 'cheapest' && "bg-indigo-50 text-indigo-800 border-indigo-200/80",
+                        path.badge === 'minimal_walk' && "bg-purple-50 text-purple-800 border-purple-200/80"
+                      )}>
+                        {path.badge === 'recommended' && '⚡ '}
+                        {path.badge === 'direct' && '🎯 '}
+                        {path.badge === 'fastest' && '⏱️ '}
+                        {path.badge === 'cheapest' && '💰 '}
+                        <span>{lang === 'am' ? path.badgeLabel.am : path.badgeLabel.en}</span>
+                      </span>
+                    ) : (
+                      <span className="p-1 px-1.5 bg-slate-50 text-slate-600 text-[8px] font-black rounded uppercase tracking-wider border border-slate-200">
+                        {path.transfers === 0 ? (lang === 'am' ? 'ቀጥታ መስመር' : 'Direct') : `${path.transfers} ${lang === 'am' ? 'ግንኙነት' : (path.transfers === 1 ? 'Transfer' : 'Transfers')}`}
+                      </span>
+                    )}
+
+                    <span className="text-[10px] text-slate-500 font-bold bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
+                      {path.transfers === 0 ? (lang === 'am' ? 'ቀጥታ ታክሲ' : 'Direct Minibus') : `${path.transfers} ${lang === 'am' ? 'ግንኙነት' : 'Transfer'}`}
                     </span>
-                    {totalDistKm && (
-                      <span className="text-[10px] text-slate-500 font-bold bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
-                        {totalDistKm} km
-                      </span>
-                    )}
-                    {totalDurationMins && (
-                      <span className="text-[10px] text-slate-500 font-bold bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded leading-none">
-                        {totalDurationMins} {lang === 'en' ? 'mins' : 'ደቂቃ'}
-                      </span>
-                    )}
-                    {totalFare && (
-                      <span className="text-[10px] text-emerald-700 font-black bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded leading-none flex items-center gap-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]">
-                        <Coins className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <span>{totalFare} {lang === 'en' ? 'ETB' : 'ብር'}</span>
-                      </span>
-                    )}
                   </div>
-                  <div className="text-[9px] text-slate-400 font-bold shrink-0">{lang === 'en' ? 'Option' : 'አማራጭ'} {idx + 1}</div>
+                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider shrink-0">
+                    {lang === 'en' ? 'Option' : 'አማራጭ'} {idx + 1}
+                  </div>
+                </div>
+
+                {/* Key Metrics Row */}
+                <div className="flex items-center gap-3 text-xs font-bold text-slate-700">
+                  <div className="flex items-center gap-1 text-slate-900 font-black">
+                    <span>{totalDurationMins}</span>
+                    <span className="text-[10px] font-medium text-slate-500">{lang === 'en' ? 'mins' : 'ደቂቃ'}</span>
+                  </div>
+                  <span className="text-slate-300">·</span>
+                  <div className="flex items-center gap-1">
+                    <span>{totalDistKm}</span>
+                    <span className="text-[10px] font-medium text-slate-500">km</span>
+                  </div>
+                  <span className="text-slate-300">·</span>
+                  <div className="flex items-center gap-1 text-emerald-700 font-black">
+                    <Coins className="w-3.5 h-3.5 text-emerald-600 inline shrink-0" />
+                    <span>{totalFare}</span>
+                    <span className="text-[10px] font-bold text-emerald-600">{lang === 'en' ? 'ETB' : 'ብር'}</span>
+                  </div>
+                  {path.totalWalkingDistance > 50 && (
+                    <>
+                      <span className="text-slate-300">·</span>
+                      <div className="text-[10px] text-slate-400 font-medium truncate">
+                        🚶 {path.totalWalkingDistance}m {lang === 'en' ? 'walk' : 'እርምጃ'}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Vertical Leg Steps Visual Segment */}
-                <div className="flex flex-col gap-3 relative">
+                <div className="flex flex-col gap-3.5 relative pt-1">
                   {/* Vertical connect lines */}
-                  <div className="absolute left-[9px] top-5 bottom-5 w-[1.5px] bg-slate-100 group-hover:bg-primary/20 transition-colors" />
+                  <div className="absolute left-[9px] top-3 bottom-3 w-[1.5px] bg-slate-200 group-hover:bg-primary/20 transition-colors" />
 
-                  {/* Optional Walking Step */}
-                  <div className="flex gap-3 relative z-10">
-                    <div className="w-5 h-5 bg-slate-50 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0">
-                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-pulse" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-xs font-bold text-slate-700 leading-none">
-                        {lang === 'en' ? `Walk to ${path.legs[0].from}` : `${path.legs[0].from} ድረስ በእግር መጓዝ`}
+                  {/* Optional First-Mile Walking Step */}
+                  {path.walkToStart && path.walkToStart.distance > 50 && (
+                    <div className="flex gap-3 relative z-10">
+                      <div className="w-5 h-5 bg-slate-100 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0">
+                        <div className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-slate-600 leading-snug">
+                          {lang === 'en' 
+                            ? `Walk ${path.walkToStart.distance}m (~${Math.max(1, Math.round(path.walkToStart.duration / 60))} min) to ${path.walkToStart.to}` 
+                            : `${path.walkToStart.to} ድረስ ${path.walkToStart.distance} ሜትር በእግር መጓዝ`}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   {path.legs.map((leg, legIdx) => {
                     const colors = [
                       'bg-cyan-500',
-                      'bg-amber-500',
                       'bg-indigo-500',
+                      'bg-amber-500',
                       'bg-rose-500'
                     ];
                     const dotColor = colors[legIdx % colors.length];
+                    const legKm = (leg.distance / 1000).toFixed(1);
+                    const legMins = Math.max(1, Math.round(leg.duration / 60));
                     
                     return (
-                      <div key={`leg-${legIdx}`} className="flex gap-3 relative z-10">
-                        <div className={cn(
-                          "w-5 h-5 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0",
-                          dotColor
-                        )}>
-                          <div className="w-1.5 h-1.5 bg-white rounded-full" />
-                        </div>
-                        <div className="flex-1 min-w-0 flex flex-col justify-center">
-                          <div className="text-xs font-bold text-slate-800 truncate leading-none mb-1">
-                            {legIdx === 0 
-                              ? (lang === 'en' ? `Board @ ${leg.from}` : `ከ${leg.from} ይሳፈሩ`) 
-                              : (lang === 'en' ? `Transfer @ ${leg.from}` : `ከ${leg.from} መገናኛ ያስተላልፉ`)}
+                      <div key={`leg-${legIdx}`} className="flex flex-col gap-2 relative z-10">
+                        <div className="flex gap-3">
+                          <div className={cn(
+                            "w-5 h-5 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0",
+                            dotColor
+                          )}>
+                            <div className="w-1.5 h-1.5 bg-white rounded-full" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={cn(
-                              "text-[8px] px-1.5 py-0.5 rounded font-black border uppercase tracking-tighter shadow-sm leading-none",
-                              legIdx % 2 === 0 ? "bg-cyan-50 text-cyan-600 border-cyan-100" : "bg-amber-50 text-amber-600 border-amber-100"
-                            )}>
-                              {leg.route.code}
-                            </span>
-                            <span className="text-[10px] text-slate-500 truncate font-semibold leading-none">{leg.route.name}</span>
+                          <div className="flex-1 min-w-0 flex flex-col justify-center">
+                            <div className="text-xs font-bold text-slate-900 truncate leading-none mb-1.5">
+                              {legIdx === 0 
+                                ? (lang === 'en' ? `Board @ ${leg.from}` : `ከ${leg.from} ይሳፈሩ`) 
+                                : (lang === 'en' ? `Transfer @ ${leg.from}` : `ከ${leg.from} መገናኛ ያስተላልፉ`)}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-black border uppercase tracking-tight bg-slate-100 text-slate-800 border-slate-200 shadow-xs leading-none">
+                                {leg.route.code}
+                              </span>
+                              <span className="text-[11px] text-slate-600 font-semibold truncate leading-none">
+                                {leg.route.name}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium mt-1">
+                              {legKm} km · ~{legMins} {lang === 'en' ? 'min' : 'ደቂቃ'} · {leg.fare} ETB
+                            </div>
                           </div>
                         </div>
+
+                        {/* Transfer wait indicator if another leg follows */}
+                        {legIdx < path.legs.length - 1 && (
+                          <div className="flex gap-3 pl-0.5 py-1">
+                            <div className="w-4 h-4 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0 ml-0.5">
+                              <span className="text-[8px]">🔄</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-amber-700">
+                              {lang === 'en' 
+                                ? `Transfer at ${leg.to} (~5 min connection)` 
+                                : `በ${leg.to} መገናኛ ያስተላልፉ (~5 ደቂቃ)`}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
+
+                  {/* Optional Last-Mile Walking Step */}
+                  {path.walkToEnd && path.walkToEnd.distance > 50 && (
+                    <div className="flex gap-3 relative z-10">
+                      <div className="w-5 h-5 bg-slate-100 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0">
+                        <div className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-slate-600 leading-snug">
+                          {lang === 'en' 
+                            ? `Walk ${path.walkToEnd.distance}m (~${Math.max(1, Math.round(path.walkToEnd.duration / 60))} min) to ${path.walkToEnd.to}` 
+                            : `${path.walkToEnd.to} ድረስ ${path.walkToEnd.distance} ሜትር በእግር መጓዝ`}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex gap-3 relative z-10">
                     <div className="w-5 h-5 bg-emerald-500 rounded-full border-[3px] border-white shadow-sm flex items-center justify-center shrink-0">
                       <div className="w-1.5 h-1.5 bg-white rounded-full" />
                     </div>
                     <div className="flex-grow">
-                      <div className="text-xs font-bold text-slate-700 leading-none">
+                      <div className="text-xs font-black text-slate-800 leading-none">
                         {lang === 'en' ? `Arrival: ${destination}` : `መድረሻ፡ ${destination}`}
                       </div>
                     </div>
@@ -1606,13 +1682,13 @@ export default function TripPlanner({
                 </div>
 
                 {/* --- COMMUNITY ROUTE VERIFICATION PANEL --- */}
-                <div className="flex items-center justify-between border-t border-slate-50 pt-3 mt-1 shrink-0">
-                  <div className="flex items-center gap-1">
-                    <span className="p-0.5 rounded bg-blue-50 text-blue-500 shrink-0">
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-1 shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="p-1 rounded bg-blue-50 text-blue-600 shrink-0">
                       <Check className="w-3.5 h-3.5" />
                     </span>
-                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-tighter">
-                      {lang === 'en' ? 'Community Verified Route' : 'ማህበረሰብ ያረጋገጠው መስመር'}
+                    <span className="text-[10px] font-bold text-slate-500">
+                      {lang === 'en' ? 'Community Verified' : 'በማህበረሰብ የተረጋገጠ'}
                     </span>
                   </div>
 
@@ -1621,7 +1697,7 @@ export default function TripPlanner({
                     type="button"
                     onClick={(e) => upvoteRouteCode(routeKey, e)}
                     className={cn(
-                      "px-2.5 py-1.5 rounded-xl text-[9px] font-black border uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95",
+                      "px-2.5 py-1.5 rounded-xl text-[10px] font-black border uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95",
                       hasVoted 
                         ? "bg-emerald-50 border-emerald-200 text-emerald-600" 
                         : "bg-white border-slate-100 hover:border-slate-300 text-slate-600 hover:text-slate-800"

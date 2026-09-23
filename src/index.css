@@ -16,11 +16,55 @@
 @layer base {
   html, body, #root {
     @apply h-full overflow-hidden antialiased bg-slate-50 text-slate-900;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
   }
 }
 
+.touch-pan-y {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hardware-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+  will-change: transform;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
 .leaflet-container {
-  @apply bg-[#e8f4f8] w-full h-full;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  background-color: #f4f6f8;
+  z-index: 1;
+}
+
+.leaflet-tile {
+  transition: opacity 0.2s ease-in-out;
+}
+
+.leaflet-zoom-animated {
+  will-change: transform;
 }
 
 @keyframes upulse {

@@ -12,6 +12,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { Station, COORDS, STATIONS, ROUTES } from '../data/transitData';
 import { TripPath } from '../lib/routing';
+import { isValidLatLng, DEFAULT_ADDIS_CENTER, DEFAULT_ZOOM } from '../utils/geoUtils';
 
 // Fix Leaflet marker icons
 // @ts-ignore
@@ -49,12 +50,16 @@ interface MapProps {
   plannerEnd?: [number, number] | null;
   reports?: StationReport[];
   onReportClick?: (report: StationReport) => void;
+  isLowDataMode?: boolean;
+  onOpenOfflineManager?: () => void;
 }
 
 function MapUpdater({ center, zoom, activePath, panelOpen, plannerStart, plannerEnd }: { center: [number, number], zoom: number, activePath: any, panelOpen: boolean, plannerStart?: [number, number] | null; plannerEnd?: [number, number] | null }) {
   const map = useMap();
-  const lastCenter = useRef<[number, number]>(center);
-  const lastZoom = useRef<number>(zoom);
+  const safeInitCenter: [number, number] = isValidLatLng(center) ? center : DEFAULT_ADDIS_CENTER;
+  const safeInitZoom: number = (typeof zoom === 'number' && !isNaN(zoom) && isFinite(zoom)) ? zoom : DEFAULT_ZOOM;
+  const lastCenter = useRef<[number, number]>(safeInitCenter);
+  const lastZoom = useRef<number>(safeInitZoom);
   const isMoving = useRef(false);
 
   const lastActivePathSig = useRef<string | null>(null);
@@ -67,45 +72,78 @@ function MapUpdater({ center, zoom, activePath, panelOpen, plannerStart, planner
   }, [map]);
 
   useEffect(() => {
-    // Initial resize fix and panel changes
-    // Increased delay and added a check to prevent multiple triggers during animation
-    const timer = setTimeout(() => {
+    // Immediate and staggered invalidateSize to ensure tiles render immediately on mount & panel shifts
+    try {
       map.invalidateSize({ animate: false });
-    }, 600); // Wait for transition to complete fully
-    return () => clearTimeout(timer);
+    } catch {
+      // ignore
+    }
+    const t1 = setTimeout(() => { try { map.invalidateSize({ animate: false }); } catch {} }, 100);
+    const t2 = setTimeout(() => { try { map.invalidateSize({ animate: false }); } catch {} }, 350);
+    const t3 = setTimeout(() => { try { map.invalidateSize({ animate: false }); } catch {} }, 800);
+
+    const container = map.getContainer();
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && container) {
+      resizeObserver = new ResizeObserver(() => {
+        try {
+          map.invalidateSize({ animate: false });
+        } catch {}
+      });
+      resizeObserver.observe(container);
+    }
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      if (resizeObserver && container) {
+        resizeObserver.unobserve(container);
+        resizeObserver.disconnect();
+      }
+    };
   }, [map, panelOpen]);
 
   useEffect(() => {
+    if (!isValidLatLng(center)) {
+      return;
+    }
+    const targetZoom = (typeof zoom === 'number' && !isNaN(zoom) && isFinite(zoom)) ? zoom : DEFAULT_ZOOM;
+
     const hasCenterChanged = lastCenter.current[0] !== center[0] || lastCenter.current[1] !== center[1];
-    const hasZoomChanged = lastZoom.current !== zoom;
+    const hasZoomChanged = lastZoom.current !== targetZoom;
 
     if (hasCenterChanged || hasZoomChanged) {
-      const currentCenter = map.getCenter();
-      const currentZoom = map.getZoom();
+      try {
+        const currentCenter = map.getCenter();
+        const currentZoom = map.getZoom();
 
-      const latDiff = Math.abs(currentCenter.lat - center[0]);
-      const lngDiff = Math.abs(currentCenter.lng - center[1]);
-      
-      // Ignore micro-jitter to save CPU and reduce lag
-      if (latDiff < 0.0001 && lngDiff < 0.0001 && Math.abs(currentZoom - zoom) < 0.05) return;
+        const latDiff = Math.abs(currentCenter.lat - center[0]);
+        const lngDiff = Math.abs(currentCenter.lng - center[1]);
+        
+        // Ignore micro-jitter to save CPU and reduce lag
+        if (latDiff < 0.0001 && lngDiff < 0.0001 && Math.abs(currentZoom - targetZoom) < 0.05) return;
 
-      const isBigJump = latDiff > 0.02 || lngDiff > 0.02;
+        const isBigJump = latDiff > 0.02 || lngDiff > 0.02;
 
-      if (isBigJump) {
-        map.flyTo(center, zoom, { duration: 0.8 });
-      } else {
-        map.panTo(center, { animate: true, duration: 0.4 });
+        if (isBigJump || hasZoomChanged) {
+          map.flyTo(center, targetZoom, { duration: 0.7, easeLinearity: 0.25 });
+        } else {
+          map.panTo(center, { animate: true, duration: 0.35 });
+        }
+        
+        lastCenter.current = center;
+        lastZoom.current = targetZoom;
+      } catch (err) {
+        console.warn('Map animation error ignored:', err);
       }
-      
-      lastCenter.current = center;
-      lastZoom.current = zoom;
     }
   }, [center, zoom, map]);
 
   useEffect(() => {
-    const pathSig = activePath ? activePath.legs.map((l: any) => `${l.from}-${l.to}`).join('|') : 'null';
-    const startSig = plannerStart ? `${plannerStart[0].toFixed(5)},${plannerStart[1].toFixed(5)}` : 'null';
-    const endSig = plannerEnd ? `${plannerEnd[0].toFixed(5)},${plannerEnd[1].toFixed(5)}` : 'null';
+    const pathSig = activePath ? activePath.legs?.map((l: any) => `${l.from}-${l.to}`).join('|') : 'null';
+    const startSig = isValidLatLng(plannerStart) ? `${plannerStart[0].toFixed(5)},${plannerStart[1].toFixed(5)}` : 'null';
+    const endSig = isValidLatLng(plannerEnd) ? `${plannerEnd[0].toFixed(5)},${plannerEnd[1].toFixed(5)}` : 'null';
 
     const hasPathChanged = lastActivePathSig.current !== pathSig;
     const hasStartChanged = lastPlannerStartSig.current !== startSig;
@@ -119,31 +157,51 @@ function MapUpdater({ center, zoom, activePath, panelOpen, plannerStart, planner
     lastPlannerStartSig.current = startSig;
     lastPlannerEndSig.current = endSig;
 
-    if (activePath && activePath.legs.length > 0) {
+    if (activePath && Array.isArray(activePath.legs) && activePath.legs.length > 0) {
       const coords: [number, number][] = [];
       activePath.legs.forEach((leg: any) => {
-        if (leg.geometry) {
-          coords.push(...leg.geometry);
+        if (Array.isArray(leg.geometry)) {
+          leg.geometry.forEach((pt: any) => {
+            if (isValidLatLng(pt)) coords.push(pt);
+          });
         } else {
-          if (COORDS[leg.from]) coords.push(COORDS[leg.from]);
-          if (COORDS[leg.to]) coords.push(COORDS[leg.to]);
+          const fromPt = COORDS[leg.from];
+          const toPt = COORDS[leg.to];
+          if (isValidLatLng(fromPt)) coords.push(fromPt);
+          if (isValidLatLng(toPt)) coords.push(toPt);
         }
       });
       
       if (coords.length > 1) {
-        const bounds = L.latLngBounds(coords);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: true });
+        try {
+          const bounds = L.latLngBounds(coords);
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: true });
+          }
+        } catch (err) {
+          console.warn('Map fitBounds route error ignored:', err);
+        }
       }
     } else {
       const coords: [number, number][] = [];
-      if (plannerStart) coords.push(plannerStart);
-      if (plannerEnd) coords.push(plannerEnd);
+      if (isValidLatLng(plannerStart)) coords.push(plannerStart);
+      if (isValidLatLng(plannerEnd)) coords.push(plannerEnd);
       if (coords.length > 0) {
         if (coords.length === 1) {
-          map.setView(coords[0], 15, { animate: true });
+          try {
+            map.setView(coords[0], 15, { animate: true });
+          } catch (err) {
+            console.warn('Map setView error ignored:', err);
+          }
         } else {
-          const bounds = L.latLngBounds(coords);
-          map.fitBounds(bounds, { padding: [80, 80], maxZoom: 15, animate: true });
+          try {
+            const bounds = L.latLngBounds(coords);
+            if (bounds.isValid()) {
+              map.fitBounds(bounds, { padding: [80, 80], maxZoom: 15, animate: true });
+            }
+          } catch (err) {
+            console.warn('Map fitBounds planner error ignored:', err);
+          }
         }
       }
     }
@@ -357,15 +415,6 @@ const mapStyles = `
     margin: 4px !important;
     box-shadow: 0 4px 10px rgba(0,0,0,0.15) !important;
   }
-  .blueprint {
-    background-color: #0b1329 !important;
-    background-image: 
-      radial-gradient(rgba(8, 145, 178, 0.25) 1.5px, transparent 1.5px),
-      linear-gradient(rgba(8, 145, 178, 0.08) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(8, 145, 178, 0.08) 1px, transparent 1px) !important;
-    background-size: 24px 24px, 48px 48px, 48px 48px !important;
-    background-position: center !important;
-  }
 `;
 
 interface StationMarkerProps {
@@ -383,6 +432,10 @@ const StationMarker = memo(({ name, pos, icon, onClick }: StationMarkerProps) =>
   const eventHandlers = useMemo(() => ({
     click: clickHandler
   }), [clickHandler]);
+
+  if (!isValidLatLng(pos)) {
+    return null;
+  }
 
   return (
     <Marker 
@@ -410,6 +463,10 @@ const ReportMarker = memo(({ report, icon, onClick }: ReportMarkerProps) => {
     click: clickHandler
   }), [clickHandler]);
 
+  if (!isValidLatLng(report.location)) {
+    return null;
+  }
+
   return (
     <Marker 
       position={report.location} 
@@ -421,7 +478,17 @@ const ReportMarker = memo(({ report, icon, onClick }: ReportMarkerProps) => {
 });
 
 
-const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang, panelOpen, isOffline = false, plannerStart, plannerEnd, reports, onReportClick }: MapProps) => {
+const getSanitizedCartoKey = (): string => {
+  const key = (import.meta.env.VITE_CARTO_API_KEY as string) || '';
+  if (key && !key.includes('YOUR_KEY') && !key.includes('http') && key.trim().length > 5) {
+    return key.trim();
+  }
+  return 'cb1_3tnb_1_2da65b7a79e52dc561858c69';
+};
+
+const CARTO_KEY = getSanitizedCartoKey();
+
+const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang, panelOpen, isOffline = false, plannerStart, plannerEnd, reports, onReportClick, isLowDataMode = false, onOpenOfflineManager }: MapProps) => {
   const [heading, setHeading] = useState(0);
   const hasSensor = useRef(false);
   const lastInteractionTime = useRef(0);
@@ -535,76 +602,78 @@ const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang
     onStationClick(name);
   }, [onStationClick]);
 
+  const handleTileError = useCallback((error: L.TileErrorEvent) => {
+    const tile = error.tile as HTMLImageElement;
+    if (!tile) return;
+    const retryCount = Number(tile.dataset.retried || 0);
+    const coords = (error as any).coords;
+    if (!coords) return;
+
+    if (retryCount === 0) {
+      tile.dataset.retried = '1';
+      // Subdomain mirror fallback
+      tile.src = CARTO_KEY
+        ? `https://a.basemaps.cartocdn.com/light_all/${coords.z}/${coords.x}/${coords.y}.png?key=${CARTO_KEY}`
+        : `https://tile.openstreetmap.org/${coords.z}/${coords.x}/${coords.y}.png`;
+    } else if (retryCount === 1) {
+      tile.dataset.retried = '2';
+      // OpenStreetMap global tile server fallback
+      tile.src = `https://tile.openstreetmap.org/${coords.z}/${coords.x}/${coords.y}.png`;
+    }
+  }, []);
+
   const showStationIcons = currentZoom >= 16;
+
+  const safeCenter: [number, number] = useMemo(() => {
+    return isValidLatLng(center) ? center : DEFAULT_ADDIS_CENTER;
+  }, [center]);
+
+  const safeZoom: number = useMemo(() => {
+    return (typeof zoom === 'number' && !isNaN(zoom) && isFinite(zoom)) ? zoom : DEFAULT_ZOOM;
+  }, [zoom]);
 
   return (
     <div className="w-full h-full relative z-0">
       <style>{mapStyles}</style>
 
-      {offline && (
-        <div className="absolute top-24 right-3 z-[1000] pointer-events-none">
-          <div className="bg-slate-950/90 backdrop-blur-md text-cyan-400 border border-cyan-500/30 px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-2xl animate-pulse">
-            <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-ping" />
-            <span className="text-[10px] font-black tracking-wider uppercase">Addis Ababa Offline Map</span>
-          </div>
-        </div>
-      )}
-
+      {/* Map */}
       <MapContainer 
-        center={center} 
-        zoom={zoom} 
+        center={safeCenter} 
+        zoom={safeZoom} 
         scrollWheelZoom={true} 
         zoomControl={false}
         preferCanvas={true}
-        className={`w-full h-full ${offline ? 'blueprint' : ''}`}
-        maxBounds={[[8.82, 38.60], [9.12, 38.90]]}
-        maxBoundsViscosity={1.0}
-        minZoom={12}
+        className="w-full h-full"
+        style={{ width: '100%', height: '100%', minHeight: '100%' }}
+        maxBounds={[[8.40, 38.30], [9.60, 39.20]]}
+        maxBoundsViscosity={0.25}
+        minZoom={10}
         maxZoom={18}
       >
-        {!offline && (
-          <TileLayer
-            attribution='&copy; Voyager'
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-            updateWhenIdle={true}
-            keepBuffer={3}
-            opacity={1.0}
-          />
-        )}
-        <MapUpdater center={center} zoom={zoom} activePath={activePath} panelOpen={panelOpen} plannerStart={plannerStart} plannerEnd={plannerEnd} />
+        <TileLayer
+          attribution={CARTO_KEY
+            ? '&copy; <a href="https://carto.com/" target="_blank" rel="noopener noreferrer">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>'
+            : '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>'}
+          url={CARTO_KEY
+            ? `https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`
+            : `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`}
+          subdomains={CARTO_KEY ? ['a', 'b', 'c', 'd'] : ['a', 'b', 'c']}
+          eventHandlers={{
+            tileerror: handleTileError,
+          }}
+          updateWhenIdle={false}
+          keepBuffer={6}
+          opacity={1.0}
+          maxZoom={19}
+        />
+        <MapUpdater center={safeCenter} zoom={safeZoom} activePath={activePath} panelOpen={panelOpen} plannerStart={plannerStart} plannerEnd={plannerEnd} />
         <ZoomTracker onZoomChange={setCurrentZoom} />
-
-        {offline && (
-          <Fragment key="offline-route-mesh">
-            {ROUTES.map((r, idx) => {
-              const fromCoord = COORDS[r.from];
-              const toCoord = COORDS[r.to];
-              if (!fromCoord || !toCoord) return null;
-              
-              const isEven = idx % 2 === 0;
-              return (
-                <Polyline
-                  key={`offline-mesh-${r.id}-${idx}`}
-                  positions={[fromCoord, toCoord]}
-                  pathOptions={{
-                    color: isEven ? '#06b6d4' : '#f59e0b',
-                    weight: 1.2,
-                    opacity: 0.12,
-                    dashArray: '3, 6',
-                    interactive: false
-                  }}
-                />
-              );
-            })}
-          </Fragment>
-        )}
         
-        
-        {userLocation && (
+        {isValidLatLng(userLocation) && (
           <Marker position={userLocation} icon={createUserIcon(heading)} zIndexOffset={3000} />
         )}
 
-        {plannerStart && (
+        {isValidLatLng(plannerStart) && (
           <Marker 
             position={plannerStart} 
             icon={plannerStartIcon(lang === 'en' ? 'Origin' : 'መነሻ')} 
@@ -612,7 +681,7 @@ const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang
           />
         )}
 
-        {plannerEnd && (
+        {isValidLatLng(plannerEnd) && (
           <Marker 
             position={plannerEnd} 
             icon={plannerEndIcon(lang === 'en' ? 'Destination' : 'መድረሻ')} 
@@ -627,6 +696,7 @@ const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang
           spiderfyOnMaxZoom={true}
         >
           {locations.map(([name, pos], index) => {
+            if (!isValidLatLng(pos)) return null;
             const station = stationLookup.get(name);
             return (
               <StationMarker 
@@ -642,15 +712,16 @@ const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang
 
         {/* Route visualization for the active path */}
         {activePath ? (
-          <Fragment key={`active-path-${activePath.legs.length}-${activePath.legs.map(l => l.from).join('-')}-${activePath.legs.some(l => !!l.geometry)}`}>
-            {activePath.legs.map((leg, i) => {
+          <Fragment key={`active-path-${activePath.legs?.length || 0}-${activePath.legs?.map(l => l.from).join('-')}-${activePath.legs?.some(l => !!l.geometry)}`}>
+            {activePath.legs?.map((leg, i) => {
               const fromCoord = COORDS[leg.from];
               const toCoord = COORDS[leg.to];
               
-              if (!fromCoord || !toCoord) return null;
+              if (!isValidLatLng(fromCoord) || !isValidLatLng(toCoord)) return null;
 
-              // If geometry exists, use it. Otherwise use the start/end points.
-              const positions = leg.geometry || [fromCoord, toCoord];
+              // If geometry exists, validate each point. Otherwise use the start/end points.
+              const validGeometry = Array.isArray(leg.geometry) ? leg.geometry.filter(isValidLatLng) : null;
+              const positions: [number, number][] = (validGeometry && validGeometry.length > 1) ? validGeometry : [fromCoord, toCoord];
 
               return (
                 <Fragment key={`leg-${i}-${leg.from}-${leg.to}`}>
@@ -709,7 +780,7 @@ const Map = memo(({ center, zoom, userLocation, activePath, onStationClick, lang
         ) : null}
 
         {/* Community crowdsourced pins & updates */}
-        {reports?.map((report) => (
+        {reports?.filter(r => r && isValidLatLng(r.location)).map((report) => (
           <ReportMarker 
             key={`report-marker-${report.id}`}
             report={report}
