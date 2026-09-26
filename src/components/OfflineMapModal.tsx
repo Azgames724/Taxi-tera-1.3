@@ -224,10 +224,9 @@ export const OfflineMapModal: React.FC<OfflineMapModalProps> = ({
                   }`}
                 >
                   <motion.div
-                    layout
-                    className={`bg-white w-4.5 h-4.5 rounded-full shadow-md transform transition-transform ${
-                      isLowDataMode ? 'translate-x-5.5' : 'translate-x-0'
-                    }`}
+                    animate={{ x: isLowDataMode ? 22 : 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="bg-white w-4.5 h-4.5 rounded-full shadow-md"
                   />
                 </button>
               </div>
@@ -254,10 +253,9 @@ export const OfflineMapModal: React.FC<OfflineMapModalProps> = ({
                   }`}
                 >
                   <motion.div
-                    layout
-                    className={`bg-white w-4.5 h-4.5 rounded-full shadow-md transform transition-transform ${
-                      isOffline ? 'translate-x-5.5' : 'translate-x-0'
-                    }`}
+                    animate={{ x: isOffline ? 22 : 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="bg-white w-4.5 h-4.5 rounded-full shadow-md"
                   />
                 </button>
               </div>

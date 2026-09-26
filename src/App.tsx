@@ -1244,7 +1244,7 @@ export default function App() {
           y: panelY
         }}
         style={{ height: '92vh' }}
-        transition={{ type: 'spring', damping: 32, stiffness: 300, mass: 0.8 }}
+        transition={{ type: 'spring', damping: 30, stiffness: 280, mass: 0.6 }}
         drag={selectedStation ? false : "y"}
         dragListener={false}
         dragControls={dragControls}
@@ -1252,7 +1252,7 @@ export default function App() {
           top: 160 - (typeof panelY === 'number' ? panelY : 160), 
           bottom: Math.round(0.92 * windowHeight - 135) - (typeof panelY === 'number' ? panelY : 160) 
         }}
-        dragElastic={0.12}
+        dragElastic={0.08}
         dragMomentum={false}
         onDragEnd={(_, info) => {
           if (selectedStation) return;
@@ -1265,7 +1265,7 @@ export default function App() {
           const snapCollapsed = Math.round(0.92 * windowHeight - 135);
 
           // natural sliding with light momentum projection
-          const projectedY = currentY + (velocity * 0.12);
+          const projectedY = currentY + (velocity * 0.15);
 
           const distFull = Math.abs(projectedY - snapFull);
           const distExpanded = Math.abs(projectedY - snapExpanded);
@@ -1313,60 +1313,84 @@ export default function App() {
             <div className="w-12 h-1.5 bg-slate-200/90 rounded-full hover:bg-slate-300 transition-colors" />
           </div>
 
-          {/* Custom Segment Tab Selector */}
+          {/* Custom Segment Tab Selector with Smooth Animated Gliding Pill */}
           <div className="px-4 pb-2.5" onPointerDownCapture={(e) => e.stopPropagation()}>
-            <div className="p-0.5 bg-slate-100/90 rounded-2xl flex items-center font-sans border border-slate-200/20 shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)]">
+            <div className="p-0.5 bg-slate-100/90 rounded-2xl flex items-center font-sans border border-slate-200/20 shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)] relative">
               <button
+                type="button"
                 onClick={() => {
                   setActiveTab('trips');
-                  setPanelHeight('expanded');
+                  if (panelHeight === 'collapsed') setPanelHeight('expanded');
                   setPanelOpen(true);
                 }}
                 className={cn(
-                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-colors cursor-pointer flex items-center justify-center gap-1.5 relative z-10 select-none",
                   activeTab === 'trips' 
-                    ? "bg-white text-slate-800 shadow-[0_2.5px_8px_rgba(15,23,42,0.06)]" 
+                    ? "text-slate-900" 
                     : "text-slate-400 hover:text-slate-600"
                 )}
               >
+                {activeTab === 'trips' && (
+                  <motion.div
+                    layoutId="activeSegmentPill"
+                    className="absolute inset-0 bg-white rounded-xl shadow-[0_2.5px_8px_rgba(15,23,42,0.08)] -z-10"
+                    transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                  />
+                )}
                 <MapIcon className="w-3.5 h-3.5 shrink-0" />
                 <span>{lang === 'en' ? 'Planner' : 'አቅጣጫ'}</span>
               </button>
               
               <button
+                type="button"
                 onClick={() => {
                   setActiveTab('stations');
                   setShowFavsOnly(false);
-                  setPanelHeight('expanded');
+                  if (panelHeight === 'collapsed') setPanelHeight('expanded');
                   setPanelOpen(true);
                 }}
                 className={cn(
-                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-colors cursor-pointer flex items-center justify-center gap-1.5 relative z-10 select-none",
                   (activeTab === 'stations' && !showFavsOnly)
-                    ? "bg-white text-slate-800 shadow-[0_2.5px_8px_rgba(15,23,42,0.06)]" 
+                    ? "text-slate-900" 
                     : "text-slate-400 hover:text-slate-600"
                 )}
               >
+                {activeTab === 'stations' && !showFavsOnly && (
+                  <motion.div
+                    layoutId="activeSegmentPill"
+                    className="absolute inset-0 bg-white rounded-xl shadow-[0_2.5px_8px_rgba(15,23,42,0.08)] -z-10"
+                    transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                  />
+                )}
                 <Bus className="w-3.5 h-3.5 shrink-0" />
                 <span>{lang === 'en' ? 'Stations' : 'ጣቢያዎች'}</span>
               </button>
 
               <button
+                type="button"
                 onClick={() => {
                   setActiveTab('messages');
-                  setPanelHeight('expanded');
+                  if (panelHeight === 'collapsed') setPanelHeight('expanded');
                   setPanelOpen(true);
                 }}
                 className={cn(
-                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-all cursor-pointer relative flex items-center justify-center gap-1.5",
+                  "flex-1 py-1.5 rounded-xl text-[11px] font-black tracking-tight transition-colors cursor-pointer relative flex items-center justify-center gap-1.5 z-10 select-none",
                   activeTab === 'messages'
-                    ? "bg-white text-slate-800 shadow-[0_2.5px_8px_rgba(15,23,42,0.06)]" 
+                    ? "text-slate-900" 
                     : "text-slate-400 hover:text-slate-600"
                 )}
               >
+                {activeTab === 'messages' && (
+                  <motion.div
+                    layoutId="activeSegmentPill"
+                    className="absolute inset-0 bg-white rounded-xl shadow-[0_2.5px_8px_rgba(15,23,42,0.08)] -z-10"
+                    transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                  />
+                )}
                 <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                 <span>{lang === 'en' ? 'Updates' : 'ሪፖርቶች'}</span>
-                <span className="absolute top-1.5 right-2 w-1.5 h-1.5 bg-rose-500 rounded-full" />
+                <span className="w-1.5 h-1.5 bg-rose-500 rounded-full" />
               </button>
             </div>
           </div>
@@ -1409,16 +1433,10 @@ export default function App() {
         {/* Content */}
         <div 
           onPointerDownCapture={panelHeight === 'full' ? (e) => e.stopPropagation() : undefined}
-          className="flex-1 overflow-y-auto px-4 py-1.5 scrollbar-hide pb-32"
+          className="flex-1 overflow-y-auto px-4 py-1.5 custom-scrollbar pb-32"
         >
-            {activeTab === 'stations' ? (
-              <motion.div 
-                key="stations"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.12 }}
-                className="flex flex-col gap-6"
-              >
+            {/* Preserved Stations View */}
+            <div className={cn("flex flex-col gap-6", activeTab !== 'stations' && "hidden")}>
                 {/* Major Stations (Only shown when viewing Favorites) */}
                 {showFavsOnly && (
                   <div className="flex flex-col gap-2">
@@ -1427,14 +1445,11 @@ export default function App() {
                         {lang === 'en' ? 'Saved Stations' : 'የተቀመጡ ጣቢያዎች'}
                       </h3>
                     </div>
-                    {filteredStations.map((s, idx) => (
-                      <motion.div 
+                    {filteredStations.map((s) => (
+                      <div 
                         key={`station-${s.id}`}
-                        initial={{ opacity: 0, scale: 0.98 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: idx * 0.03 }}
                         onClick={() => handleStationClick(s)}
-                        className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100 hover:border-primary/20 hover:bg-slate-50/50 transition-all cursor-pointer group"
+                        className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100 hover:border-primary/20 hover:bg-slate-50/50 active:scale-[0.99] transition-all cursor-pointer group"
                       >
                         <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center text-slate-500 shadow-sm border border-slate-100 shrink-0">
                           {getVehicleIcon(s.t, "w-5 h-5")}
@@ -1457,7 +1472,7 @@ export default function App() {
                             <Star className={cn("w-4 h-4", favorites.includes(s.id) && "fill-current")} />
                           </button>
                         </div>
-                      </motion.div>
+                      </div>
                     ))}
                     {filteredStations.length === 0 && (
                       <div className="text-center py-8 text-xs text-slate-400 font-bold">
@@ -1476,7 +1491,7 @@ export default function App() {
                     <div 
                       key={`route-${idx}`}
                       onClick={() => handleStationClick(r.from)}
-                      className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100 hover:border-primary/20 hover:bg-slate-50/50 transition-all cursor-pointer group"
+                      className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100 hover:border-primary/20 hover:bg-slate-50/50 active:scale-[0.99] transition-all cursor-pointer group"
                     >
                       <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-500 border border-slate-100 shrink-0 group-hover:bg-amber-100/60 group-hover:text-amber-600 group-hover:border-amber-200/50 transition-all duration-300">
                         <RouteIcon className="w-4.5 h-4.5" />
@@ -1490,14 +1505,10 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-              </motion.div>
-            ) : activeTab === 'trips' ? (
-              <motion.div 
-                key="trips"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.12 }}
-              >
+            </div>
+
+            {/* Preserved Trip Planner View (State maintained across tab switches) */}
+            <div className={cn(activeTab !== 'trips' && "hidden")}>
                 <TripPlanner 
                   lang={lang} 
                   userLocation={userLocation}
@@ -1507,15 +1518,10 @@ export default function App() {
                   onLocationChange={handlePlannerLocationChange}
                   isOffline={isOffline}
                 />
-              </motion.div>
-            ) : (
-              <motion.div 
-                key="messages"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.12 }}
-                className="flex flex-col gap-4 font-sans"
-              >
+            </div>
+
+            {/* Preserved Messages / Updates View */}
+            <div className={cn("flex flex-col gap-4 font-sans", activeTab !== 'messages' && "hidden")}>
                 {/* Header card with action */}
                 <div className="bg-gradient-to-tr from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-4 shadow-md border border-white/10 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-400/10 rounded-full blur-2xl pointer-events-none" />
@@ -1834,8 +1840,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              </motion.div>
-            )}
+            </div>
         </div>
       </motion.div>
 
@@ -1854,14 +1859,14 @@ export default function App() {
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 30, stiffness: 320, mass: 0.8 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 300, mass: 0.6 }}
               drag="y"
               dragListener={false}
               dragControls={stationDragControls}
               dragConstraints={{ top: 0 }}
-              dragElastic={0.12}
+              dragElastic={0.08}
               onDragEnd={(_, info) => {
-                if (info.offset.y > 120 || info.velocity.y > 400) {
+                if (info.offset.y > 100 || info.velocity.y > 320) {
                   setSelectedStation(null);
                 }
               }}
@@ -2407,10 +2412,17 @@ export default function App() {
                   setIsAboutOpen(true);
                 }
               }}
-              className="flex flex-col items-center justify-center py-1 px-4 rounded-xl transition-all cursor-pointer relative"
+              className="flex flex-col items-center justify-center py-1.5 px-4 rounded-2xl transition-all cursor-pointer relative"
             >
+              {isActive && (
+                <motion.div
+                  layoutId="activeBottomTabPill"
+                  className="absolute inset-0 bg-cyan-50 rounded-2xl -z-10"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                />
+              )}
               <item.icon className={cn(
-                "w-5 h-5 mb-0.5 transition-all duration-200 active:scale-95",
+                "w-5 h-5 mb-0.5 transition-transform duration-200 active:scale-90",
                 isActive ? "text-primary stroke-[2.5]" : "text-slate-400 stroke-[1.8]"
               )} />
               <span className={cn(

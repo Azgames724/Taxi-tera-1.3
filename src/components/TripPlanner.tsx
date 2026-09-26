@@ -776,47 +776,59 @@ export default function TripPlanner({
             </div>
 
             {/* Origin Autocomplete Suggestions */}
-            {showOriginAuto && filteredOrigin.length > 0 && (
-              <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-100 rounded-2xl mt-1.5 shadow-[0_12px_44px_rgba(15,23,42,0.08)] overflow-hidden">
-                {filteredOrigin.map(l => {
-                  const amLabel = amharicLabels.get(l);
-                  return (
-                    <button 
-                      key={`origin-ac-${l}`}
-                      type="button"
-                      onClick={() => { setOrigin(l); setShowOriginAuto(false); }}
-                      className="w-full text-left px-4 py-3 hover:bg-slate-50 text-xs border-b border-slate-50 last:border-none transition-colors cursor-pointer"
-                    >
-                      {l === 'Current Location' ? (
-                        <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-cyan-500 fill-cyan-500/10 shrink-0" />
-                          <span>{lang === 'am' ? 'አሁን ያሉበት ቦታ' : 'Current Location'}</span>
-                        </span>
-                      ) : (
-                        <div className="flex justify-between items-center w-full">
-                          <span className="font-extrabold text-slate-800">{l}</span>
-                          {amLabel ? (
-                            <span className="text-[9px] text-slate-400 font-bold bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100 shrink-0">
-                              {amLabel}
-                            </span>
-                          ) : null}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <AnimatePresence>
+              {showOriginAuto && filteredOrigin.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -4, scale: 0.99 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.99 }}
+                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-100 rounded-2xl mt-1.5 shadow-[0_12px_44px_rgba(15,23,42,0.08)] overflow-hidden max-h-56 overflow-y-auto custom-scrollbar"
+                >
+                  {filteredOrigin.map(l => {
+                    const amLabel = amharicLabels.get(l);
+                    return (
+                      <button 
+                        key={`origin-ac-${l}`}
+                        type="button"
+                        onClick={() => { setOrigin(l); setShowOriginAuto(false); }}
+                        className="w-full text-left px-4 py-3 hover:bg-slate-50 text-xs border-b border-slate-50 last:border-none transition-colors cursor-pointer"
+                      >
+                        {l === 'Current Location' ? (
+                          <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-cyan-500 fill-cyan-500/10 shrink-0" />
+                            <span>{lang === 'am' ? 'አሁን ያሉበት ቦታ' : 'Current Location'}</span>
+                          </span>
+                        ) : (
+                          <div className="flex justify-between items-center w-full">
+                            <span className="font-extrabold text-slate-800">{l}</span>
+                            {amLabel ? (
+                              <span className="text-[9px] text-slate-400 font-bold bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100 shrink-0">
+                                {amLabel}
+                              </span>
+                            ) : null}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Swap Button */}
           <div className="absolute right-6 top-[38px] -translate-y-1/2 z-10">
-            <button 
+            <motion.button 
+              type="button"
               onClick={handleSwap}
+              whileTap={{ rotate: 180, scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
               className="p-2 bg-white hover:bg-slate-50 rounded-full border border-slate-100 shadow-md text-slate-700 active:scale-95 transition-all outline-none cursor-pointer"
+              title={lang === 'am' ? 'ቦታዎችን ቀይር' : 'Swap Origin & Destination'}
             >
               <ArrowRightLeft className="w-3.5 h-3.5 rotate-90" />
-            </button>
+            </motion.button>
           </div>
 
           {/* Destination Input */}
@@ -857,30 +869,38 @@ export default function TripPlanner({
             </div>
 
             {/* Destination Autocomplete Suggestions */}
-            {showDestAuto && filteredDest.length > 0 && (
-              <div className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-100 rounded-2xl mt-1.5 shadow-[0_12px_44px_rgba(15,23,42,0.08)] overflow-hidden">
-                {filteredDest.map(l => {
-                  const amLabel = amharicLabels.get(l);
-                  return (
-                    <button 
-                      key={`dest-ac-${l}`}
-                      type="button"
-                      onClick={() => { setDestination(l); setShowDestAuto(false); }}
-                      className="w-full text-left px-4 py-3 hover:bg-slate-50 text-xs border-b border-slate-50 last:border-none transition-colors cursor-pointer"
-                    >
-                      <div className="flex justify-between items-center w-full">
-                        <span className="font-extrabold text-slate-800">{l}</span>
-                        {amLabel ? (
-                          <span className="text-[9px] text-slate-400 font-bold bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100 shrink-0">
-                            {amLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <AnimatePresence>
+              {showDestAuto && filteredDest.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -4, scale: 0.99 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.99 }}
+                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute top-full left-0 right-0 z-50 bg-white border border-slate-100 rounded-2xl mt-1.5 shadow-[0_12px_44px_rgba(15,23,42,0.08)] overflow-hidden max-h-56 overflow-y-auto custom-scrollbar"
+                >
+                  {filteredDest.map(l => {
+                    const amLabel = amharicLabels.get(l);
+                    return (
+                      <button 
+                        key={`dest-ac-${l}`}
+                        type="button"
+                        onClick={() => { setDestination(l); setShowDestAuto(false); }}
+                        className="w-full text-left px-4 py-3 hover:bg-slate-50 text-xs border-b border-slate-50 last:border-none transition-colors cursor-pointer"
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <span className="font-extrabold text-slate-800">{l}</span>
+                          {amLabel ? (
+                            <span className="text-[9px] text-slate-400 font-bold bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100 shrink-0">
+                              {amLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Form Action Buttons */}

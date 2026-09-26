@@ -176,7 +176,7 @@ function MapUpdater({ center, zoom, activePath, panelOpen, plannerStart, planner
         try {
           const bounds = L.latLngBounds(coords);
           if (bounds.isValid()) {
-            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: true });
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: true, duration: 0.6 });
           }
         } catch (err) {
           console.warn('Map fitBounds route error ignored:', err);
@@ -197,7 +197,7 @@ function MapUpdater({ center, zoom, activePath, panelOpen, plannerStart, planner
           try {
             const bounds = L.latLngBounds(coords);
             if (bounds.isValid()) {
-              map.fitBounds(bounds, { padding: [80, 80], maxZoom: 15, animate: true });
+              map.fitBounds(bounds, { padding: [80, 80], maxZoom: 15, animate: true, duration: 0.6 });
             }
           } catch (err) {
             console.warn('Map fitBounds planner error ignored:', err);
